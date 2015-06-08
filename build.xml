@@ -1,0 +1,254 @@
+<project xmlns:ivy="antlib:org.apache.ivy.ant" name="EmployeeManagement" default="" basedir=".">
+	<property environment="env" />
+	<property name="project.name" value="EmployeeManagement" />
+	<property name="status" value="snapshot" />
+	<property name="version.major" value="1" />
+	<property name="version.minor" value="0" />
+	<property name="dist.dir" value="dist" />
+	<property name="dist.war" value="${dist.dir}/${project.name}.war" />
+	<property name="dist.jar" value="${dist.dir}/cz.is.common.jar" />
+	
+	<property name="lib.dir" value="lib" />
+	<property name="class.dir" value="build/classes" />
+	
+	<property name="testresults.dir" value="${basedir}/target/junit-reports" />
+	<property name="testattachmentsresults.dir" value="${basedir}/target/junit-reports/attachments" />
+	
+	<property name="WebContent.lib.dir" value="WebContent/WEB-INF/lib" />
+	
+	<property name="widgetset.name" value="cz.isg.widgetset.IsgWidgetset" />
+	<property name="widgetset.dir" value="WebContent/VAADIN/widgetsets" />
+	
+	<property name="themes.dir" value="WebContent/VAADIN/themes" />
+	<taskdef resource="net/sf/antcontrib/antcontrib.properties">
+		<classpath>
+			<pathelement location="tools/ant-contrib.jar" />
+		</classpath>
+	</taskdef>
+	<scriptdef name="uuid" language="javascript" description="Generate unique hash for gwt widgets temp directory">
+		<attribute name="property" />
+	    importClass( java.util.UUID );
+	    project.setProperty( attributes.get( "property" ), UUID.randomUUID() );
+	    </scriptdef>
+	<uuid property="uuid" />
+	<patternset id="WebContent.resources">
+		<include name="VAADIN/**/*" />
+		<include name="*.jsp" />
+		<include name="META-INF/context.xml" />
+	</patternset>
+	
+	<!--<target name="makewar" description="Create a war for the isg project" depends="compile-styles, build-widgetsets">-->
+	<target name="makewar" description="Create a war for the isg project" depends="compile, compile-styles">
+		<war destfile="${dist.war}" manifest="WebContent/META-INF/MANIFEST.MF" needxmlfile='false'>
+			<fileset dir="WebContent">
+				<patternset refid="WebContent.resources" />
+			</fileset>
+			<classes dir="${class.dir}" />
+			<webinf dir="WebContent/WEB-INF" erroronmissingdir="false"/>
+			<lib dir="${lib.dir}/default" />
+		</war>
+	</target>
+	
+	<target name="dockerrun" depends="makewar">
+			<!--<antcall target="dockercleanup"/>-->
+			<exec executable="docker">
+					<arg value="build"/>
+					<arg value="-t"/>
+					<arg value="employeemgmt"/>
+					<arg value="."/>	
+			</exec>
+			<exec executable="docker" outputproperty="dockerID">
+					<arg value="run"/>
+					<arg value="-d"/>
+					<arg value="-P"/>
+					<arg value="employeemgmt"/>
+			</exec>
+			<exec executable="bash" outputproperty="dockerPORT">
+				<arg value="-c"/>
+				<arg value="docker port ${dockerID} 8080 | awk -F: '{ print $2 }'"/>		
+			</exec>
+	</target>
+	
+	<target name="dockercleanup">
+		<exec executable="docker">
+				<arg value="stop"/>
+				<arg value="${dockerID}"/>
+		</exec>
+		<exec executable="docker">
+				<arg value="rm"/>
+				<arg value="${dockerID}"/>
+		</exec>
+	</target>
+
+	<!--	
+	<target name="makejar" description="Creates a jar with common packages" depends="clean, version, compile, resolve">
+		<jar destfile="${dist.jar}" manifest="WebContent/META-INF/MANIFEST.MF" basedir="${class.dir}" includes="cz/is/common/**" />
+	</target>
+	
+	<target name="publish" depends="makejar">-->
+	<target name="publish" depends="clean, version, compile, resolve">
+		<condition property="revision" value="${version.major}.${version.minor}-SNAPSHOT" else="${version.major}.${version.minor}">
+			<equals arg1="${status}" arg2="snapshot" />
+		</condition>
+		<ivy:deliver deliverpattern="ivy.xml" pubrevision="${revision}" status="${status}" />
+		<ivy:makepom ivyfile="ivy.xml" pomfile="${dist.dir}/pom.xml" />
+		<ivy:resolve />
+		<ivy:publish resolver="nexus-snapshots" update="true" revision="${revision}" overwrite="true" publishivy="false">
+			<artifacts pattern="${dist.dir}/[artifact].[ext]" />
+		</ivy:publish>
+	</target>
+	<target name="compile" description="Compile sources" depends="retrieve">
+		<mkdir dir="${class.dir}" />
+		<javac target="1.7" source="1.7" debug="true" srcdir="src" destdir="${class.dir}" encoding="UTF-8" includeantruntime="false">
+			<classpath>
+				<fileset dir="${lib.dir}" includes="**/*" />
+				<fileset dir="${WebContent.lib.dir}" includes="**/*" erroronmissingdir="false"/>
+			</classpath>
+		</javac>
+		<copy todir="${class.dir}">
+			<fileset dir="src" includes="**/*.properties" />
+			<fileset dir="src" includes="**/*.xml" />
+		</copy>
+	</target>
+	<target name="clean">
+		<delete dir="${dist.dir}" />
+		<delete dir="${lib.dir}" />
+		<delete dir="${class.dir}" />
+		<delete dir="${testresults.dir}" />
+		<ivy:cleancache/>
+	</target>
+	<target name="clean-widgetset">
+		<delete dir="${widgetset.dir}" />
+	</target>
+	<target name="version" description="Increase build version and update manifest file">
+		<if>
+			<isset property="env.BUILD_NUMBER" />
+			<then>
+				<property name="build.number" value="${env.BUILD_NUMBER}" />
+			</then>
+			<else>
+				<buildnumber file="build.num" />
+			</else>
+		</if>
+		<manifest file="WebContent/META-INF/MANIFEST.MF" mode="update">
+			<attribute name="Implementation-Version" value="${version.major}.${version.minor}.${build.number}" />
+		</manifest>
+		<echo>Version set to: ${version.major}.${version.minor}.${build.number}</echo>
+	</target>
+	<target name="retrieve" depends="resolve">
+		<mkdir dir="${lib.dir}/nodeploy" />
+		<mkdir dir="${lib.dir}/default" />
+		<ivy:retrieve conf="default,nodeploy" pattern="${lib.dir}/[conf]/[artifact].[ext]" />
+	</target>
+	<target name="retrieve-for-widgetset" depends="resolve">
+		<mkdir dir="${lib.dir}/nodeploy" />
+		<mkdir dir="${lib.dir}/default" />
+		<mkdir dir="${lib.dir}/widgetset-compile" />
+		<ivy:retrieve conf="default,nodeploy,widgetset-compile" pattern="${lib.dir}/[conf]/[artifact].[ext]" />
+	</target>
+	<target name="retrieve-for-tests" depends="resolve">
+		<mkdir dir="${lib.dir}/nodeploy" />
+		<mkdir dir="${lib.dir}/default" />
+		<ivy:retrieve conf="default,nodeploy" pattern="${lib.dir}/[conf]/[artifact].[ext]" />
+	</target>
+	<target name="resolve">
+		<ivy:resolve file="ivy.xml" conf="nodeploy" type="jar,bundle" />
+	</target>
+	<target name="report">
+		<delete dir="report" />
+		<mkdir dir="report" />
+		<ivy:resolve type="${ivy.resolve.types}" />
+		<ivy:report todir="report" />
+	</target>
+	<target name="build-widgetsets" depends="clean-widgetset, retrieve-for-widgetset, compile, generate-widgetset">
+		<java classname="com.vaadin.tools.WidgetsetCompiler" failonerror="yes" fork="yes">
+			<jvmarg value="-Djava.awt.headless=true" />
+			<jvmarg value="-Dgwt.persistentunitcachedir=${java.io.tmpdir}/widgetset_${widgetset.name}${uuid}" />
+			<arg value="-war" />
+			<arg value="${widgetset.dir}" />
+			<arg value="-deploy" />
+			<arg value="${java.io.tmpdir}/widgetset_${widgetset.name}${uuid}" />
+			<arg value="-extra" />
+			<arg value="${java.io.tmpdir}/widgetset_${widgetset.name}${uuid}" />
+			<arg value="-localWorkers" />
+			<arg value="4" />
+			<arg value="-logLevel" />
+			<arg value="INFO" />
+			<arg value="${widgetset.name}" />
+			<classpath>
+				<fileset dir="${lib.dir}" includes="**/*" />
+				<fileset dir="${WebContent.lib.dir}" includes="**/*" erroronmissingdir="false"/>
+				<pathelement path="${class.dir}" />
+			</classpath>
+		</java>
+		<!-- cleanup -->
+		<delete dir="${java.io.tmpdir}/${widgetset.name}${uuid}" />
+		<delete dir="${widgetset.dir}/../gwt-unitCache" />
+		<delete dir="${widgetset.dir}/WEB-INF" />
+	</target>
+	<target name="generate-widgetset" depends="retrieve-for-widgetset,compile">
+		<java classname="com.vaadin.server.widgetsetutils.WidgetSetBuilder" failonerror="yes" fork="yes" maxmemory="256m">
+			<arg value="${widgetset.name}" />
+			<jvmarg value="-Xss1024k" />
+			<jvmarg value="-Djava.awt.headless=true" />
+			<classpath>
+				<fileset dir="${lib.dir}" includes="**/*" />
+				<pathelement path="${class.dir}" />
+			</classpath>
+		</java>
+	</target>
+	<target name="compile-styles">
+		<foreach inheritall="true" target="compile-style" param="theme.dir">
+			<path id="themes">
+				<dirset dir="${themes.dir}" includes="*" />
+			</path>
+		</foreach>
+	</target>
+	<target name="compile-style">
+		<echo>Compiling ${theme.dir}</echo>
+		<java classname="com.vaadin.sass.SassCompiler" failonerror="yes" fork="yes" maxmemory="256m">
+			<arg value="${theme.dir}/styles.scss" />
+			<arg value="${theme.dir}/styles.css" />
+			<jvmarg value="-Xss1024k" />
+			<jvmarg value="-Djava.awt.headless=true" />
+			<classpath>
+				<fileset dir="${lib.dir}" includes="**/*" />
+				<pathelement path="${class.dir}" />
+			</classpath>
+		</java>
+	</target>
+	<target name="deploy" depends="retrieve-for-tests,makewar">
+		<delete dir="${catalina.home}/webapps/${project.name}" verbose="true" />
+		<copy toDir="${catalina.home}/webapps" file="${dist.war}" overwrite="true" />
+	</target>
+	<target name="tests" depends="compile-tests, dockerrun">
+		<delete dir="${testresults.dir}" />
+		<mkdir dir="${testresults.dir}"/>
+		<delete dir="${testattachmentsresults.dir}" />
+		<mkdir dir="${testattachmentsresults.dir}"/>
+		<echo message="dockerID: ${dockerID} - dockerPORT: ${dockerPORT}"></echo>
+		<junit fork="yes" dir="." printsummary="withOutAndErr">
+			<sysproperty key="de.biniasonline.employeemgmt.TEST_HOST" value="127.0.0.1"/>
+			<sysproperty key="de.biniasonline.employeemgmt.TEST_PORT" value="${dockerPORT}"/>
+			<sysproperty key="de.biniasonline.junit.rules.ScreenShotOnFailure.TARGETDIR" value="${testattachmentsresults.dir}"/>
+			<formatter type="xml" />
+			<classpath>
+				<pathelement path="${class.dir}" />
+				<fileset dir="${lib.dir}" includes="**/*"/>
+				<fileset dir="${WebContent.lib.dir}" includes="**/*" erroronmissingdir="false"/>
+			</classpath>
+			<batchtest todir="${testresults.dir}">
+				<fileset dir="test" includes="**/*Test.java"/>
+			</batchtest>
+		</junit>
+		<antcall target="dockercleanup"/>
+	</target>
+	<target name="compile-tests" description="Compile tests sources" depends="compile, retrieve-for-tests">
+		<javac target="1.7" debug="true" srcdir="test" destdir="${class.dir}" encoding="UTF-8" includeantruntime="false">
+			<classpath>
+				<fileset dir="${lib.dir}" includes="**/*"/>
+				<fileset dir="${WebContent.lib.dir}" includes="**/*" erroronmissingdir="false"/>
+			</classpath>
+		</javac>
+	</target>
+</project>
